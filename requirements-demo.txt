@@ -1,5 +1,0 @@
-# Additional Phase 19 UI and binary QR dependencies. The project environment
-# already provides torch, OpenCV, MediaPipe, Pillow, and the Phase 18 model code.
-gradio>=5.0,<6.0
-qrcode[pil]>=8.0,<9.0
-zxing-cpp>=2.2,<3.0

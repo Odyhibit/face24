@@ -1,8 +1,9 @@
-"""Inference-only Face24 / Phase 18 / binary QR helpers for the local demo."""
+"""Inference-only Face24 codecs and binary QR helpers for the local demo."""
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 import secrets
 import threading
 from pathlib import Path
@@ -10,25 +11,37 @@ from pathlib import Path
 import numpy as np
 import torch
 from PIL import Image, ImageOps
+from starlette.middleware import Middleware
 
-from src.face24_large_model import (
+from demo import avif_codec
+from demo.frontend import FrontendMetadataMiddleware
+from face24 import codec128 as face24_128_model, codec256 as face24_rvq_model
+from face24.codec64 import (
     decode_bytes,
+    encode_array,
     load_decoder,
     load_full,
     parameter_counts,
 )
-from src.face_crop_geometry import similarity
-from src.id_portrait_geometry import apply_transform, render_crop
-from src.vq_codec import encode_array
+from face24.alignment import apply_transform, render_crop, similarity
 
 ROOT = Path(__file__).resolve().parents[1]
-PHASE18 = ROOT / "output/phase18_identity_loss"
-CHECKPOINT = PHASE18 / "checkpoints/best.pt"
-DECODER_EXPORT = PHASE18 / "checkpoints/decoder.pt"
+WEIGHTS = ROOT / "weights"
+PHASE18 = WEIGHTS / "face24_64"
+CHECKPOINT = PHASE18 / "best.pt"
+DECODER_EXPORT = PHASE18 / "decoder.pt"
 COMPLETION = PHASE18 / "training_completion.json"
-DETECTOR_MODEL = ROOT / "models/id_portrait_detectors/face_landmarker.task"
-DETECTOR_PROVENANCE = ROOT / "models/id_portrait_detectors/provenance.json"
-DEMO_OUTPUT = ROOT / "output/phase19_qr_demo"
+PHASE21 = WEIGHTS / "face24_128"
+PHASE22 = WEIGHTS / "face24_256_rvq"
+DEFAULT_PAYLOAD_BYTES = 128
+PAYLOAD_LENGTHS = (64, 128, 256)
+MODEL_CHOICES = [("Phase 18 · 64 bytes", 64), ("Phase 21 · 128 bytes (preferred)", 128),
+                 ("Phase 22 RVQ · 256 bytes", 256), ("AVIF · up to 512 bytes", "avif")]
+# MediaPipe Face Landmarker v1 (float16), Apache-2.0:
+# https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task
+DETECTOR_MODEL = WEIGHTS / "mediapipe/face_landmarker.task"
+DETECTOR_SHA256 = "64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff"
+DEMO_OUTPUT = ROOT / "output"
 EXPECTED_ARC = 24.0
 EXPECTED_EYE = (31.5, 23.0)
 
@@ -67,9 +80,7 @@ def five_points_from_mesh(mesh, width: int, height: int) -> np.ndarray:
 
 
 def _verify_detector_asset() -> None:
-    doc = json.loads(DETECTOR_PROVENANCE.read_text(encoding="utf-8"))
-    entry = next((x for x in doc["files"] if Path(x["path"]).name == DETECTOR_MODEL.name), None)
-    if entry is None or _sha256(DETECTOR_MODEL) != entry["sha256"]:
+    if not DETECTOR_MODEL.is_file() or _sha256(DETECTOR_MODEL) != DETECTOR_SHA256:
         raise RuntimeError("The local MediaPipe face-landmark model is missing or failed its recorded hash check.")
 
 
@@ -136,71 +147,157 @@ class Face24Aligner:
         return align_from_landmarks(image, five, mesh)
 
 
-class Phase18Runtime:
+class _PhaseRuntime:
     """Loads and verifies the matching encoder and CPU decoder exactly once."""
 
+    expected_counts = {"encoder": 517408, "codebook": 16384, "decoder": 3411585, "full": 3945377}
+    codebook_keys = (("quantizer.embedding.weight", "codebook.weight"),)
+
     def __init__(self, device: str | None = None):
-        if not COMPLETION.is_file():
-            raise RuntimeError("Phase 18 training completion record is missing.")
-        completion = json.loads(COMPLETION.read_text(encoding="utf-8"))
-        if completion.get("selected_epoch") != 147 or completion.get("optimizer_steps") != 58000:
-            raise RuntimeError("Phase 18 selected-checkpoint provenance is invalid.")
-        if _sha256(CHECKPOINT) != completion["best_checkpoint_sha256"]:
-            raise RuntimeError("Phase 18 selected checkpoint hash mismatch.")
-        if _sha256(DECODER_EXPORT) != completion["decoder_sha256"]:
-            raise RuntimeError("Phase 18 decoder export hash mismatch.")
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
+        completion_path = self.directory / "training_completion.json"
+        checkpoint = self.directory / "best.pt"
+        decoder_export = self.directory / "decoder.pt"
+        if not completion_path.is_file():
+            raise RuntimeError(f"{self.label} training completion record is missing.")
+        completion = json.loads(completion_path.read_text(encoding="utf-8"))
+        if completion.get("selected_epoch") != self.selected_epoch or completion.get("optimizer_steps") != 58000:
+            raise RuntimeError(f"{self.label} selected-checkpoint provenance is invalid.")
+        if _sha256(checkpoint) != completion["best_checkpoint_sha256"]:
+            raise RuntimeError(f"{self.label} selected checkpoint hash mismatch.")
+        if _sha256(decoder_export) != completion["decoder_sha256"]:
+            raise RuntimeError(f"{self.label} decoder export hash mismatch.")
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        self.encoder, bundle = load_full(CHECKPOINT, self.device)
-        self.decoder, decoder_bundle = load_decoder(DECODER_EXPORT, "cpu")
-        if (bundle.get("codec") != "vqface-face24-large-v1" or bundle.get("kind") != "vqvae"
+        self.encoder, bundle = self.load_full(checkpoint, self.device)
+        self.decoder, decoder_bundle = self.load_decoder(decoder_export, "cpu")
+        if (bundle.get("codec") != self.codec or bundle.get("kind") != self.kind
                 or bundle.get("checkpoint_role") != "selection" or bundle.get("epoch") != completion["selected_epoch"]
                 or bundle.get("experiment_sha256") != completion["experiment_sha256"]):
-            raise RuntimeError("Loaded checkpoint is not the selected Phase 18 model.")
-        if parameter_counts(self.encoder) != {
-            "encoder": 517408, "codebook": 16384, "decoder": 3411585, "full": 3945377
-        }:
-            raise RuntimeError("Phase 18 architecture does not match the frozen codec specification.")
+            raise RuntimeError(f"Loaded checkpoint is not the selected {self.label} model.")
+        if self.parameter_counts(self.encoder) != self.expected_counts:
+            raise RuntimeError(f"{self.label} architecture does not match the frozen codec specification.")
         full_state = bundle["state_dict"]
         exported_state = decoder_bundle["state_dict"]
-        if not torch.equal(full_state["quantizer.embedding.weight"].cpu(), exported_state["codebook.weight"].cpu()):
-            raise RuntimeError("Phase 18 decoder export uses a different codebook.")
+        for full_key, export_key in self.codebook_keys:
+            if not torch.equal(full_state[full_key].cpu(), exported_state[export_key].cpu()):
+                raise RuntimeError(f"{self.label} decoder export uses a different codebook.")
         for key, value in self.encoder.decoder.state_dict().items():
             if not torch.equal(value.cpu(), exported_state["decoder." + key].cpu()):
-                raise RuntimeError("Phase 18 decoder export does not match the selected checkpoint.")
+                raise RuntimeError(f"{self.label} decoder export does not match the selected checkpoint.")
         self._lock = threading.Lock()
 
     def encode(self, face24: Image.Image) -> bytes:
         gray = np.asarray(face24.convert("L"), dtype=np.uint8)
         if gray.shape != (80, 64):
             raise ValueError("Expected a 64×80 Face24 image.")
-        with self._lock:
-            payload = encode_array(gray.astype(np.float32) / 255.0, self.encoder)
-        if len(payload) != 64:
-            raise RuntimeError(f"Encoder returned {len(payload)} bytes; expected exactly 64.")
+        with self._lock, torch.inference_mode():
+            payload = self.encode_array(gray.astype(np.float32) / 255.0, self.encoder)
+        if len(payload) != self.payload_bytes:
+            raise RuntimeError(f"Encoder returned {len(payload)} bytes; expected exactly {self.payload_bytes}.")
         return payload
 
     def reconstruct(self, payload: bytes) -> Image.Image:
-        if not isinstance(payload, (bytes, bytearray, memoryview)) or len(payload) != 64:
-            raise ValueError("Invalid Phase 18 payload: expected exactly 64 bytes.")
+        if not isinstance(payload, (bytes, bytearray, memoryview)) or len(payload) != self.payload_bytes:
+            raise ValueError(f"Invalid {self.label} payload: expected exactly {self.payload_bytes} bytes.")
         with self._lock:
-            pixels = decode_bytes(payload, self.decoder)
+            pixels = self.decode_bytes(payload, self.decoder)
         values = np.asarray(pixels, dtype=np.float32)
         if values.shape != (80, 64) or not np.isfinite(values).all():
-            raise ValueError("Phase 18 decoder returned invalid pixels.")
+            raise ValueError(f"{self.label} decoder returned invalid pixels.")
         return Image.fromarray(np.rint(np.clip(values, 0, 1) * 255).astype(np.uint8))
+
+
+class Phase18Runtime(_PhaseRuntime):
+    label = "Phase 18"
+    directory = PHASE18
+    selected_epoch = 147
+    payload_bytes = 64
+    codec = "vqface-face24-large-v1"
+    kind = "vqvae"
+    load_full = staticmethod(load_full)
+    load_decoder = staticmethod(load_decoder)
+    parameter_counts = staticmethod(parameter_counts)
+    encode_array = staticmethod(encode_array)
+    decode_bytes = staticmethod(decode_bytes)
+
+
+class DemoRuntime:
+    """The three known formats; dispatch is entirely determined by payload length."""
+
+    def __init__(self, device: str | None = None):
+        self.models = {64: Phase18Runtime(device), 128: Phase21Runtime(device), 256: Phase22Runtime(device)}
+
+    def model_for_length(self, payload_bytes: int) -> _PhaseRuntime:
+        try:
+            return self.models[payload_bytes]
+        except (KeyError, TypeError) as exc:
+            raise ValueError("Select Phase 18 (64 bytes), Phase 21 (128 bytes), or Phase 22 RVQ (256 bytes).") from exc
+
+    def reconstruct(self, payload: bytes) -> Image.Image:
+        if not isinstance(payload, (bytes, bytearray, memoryview)):
+            raise TypeError("Expected a raw binary face payload.")
+        if avif_codec.is_avif(payload):
+            return avif_codec.decode(bytes(payload))
+        return self.model_for_length(len(payload)).reconstruct(payload)
+
+
+class Phase21Runtime(_PhaseRuntime):
+    label = "Phase 21"
+    directory = PHASE21
+    selected_epoch = 187
+    payload_bytes = 128
+    codec = "vqface-face24-128-v1"
+    kind = "vqvae128"
+    load_full = staticmethod(face24_128_model.load_full)
+    load_decoder = staticmethod(face24_128_model.load_decoder)
+    parameter_counts = staticmethod(face24_128_model.parameter_counts)
+    encode_array = staticmethod(face24_128_model.encode_array)
+    decode_bytes = staticmethod(face24_128_model.decode_bytes)
+
+
+class Phase22Runtime(_PhaseRuntime):
+    label = "Phase 22 RVQ"
+    directory = PHASE22
+    selected_epoch = 197
+    payload_bytes = 256
+    codec = "face24-rvq256-v1"
+    kind = "rvqvae"
+    expected_counts = {"encoder": 517408, "codebook1": 16384, "codebook2": 16384,
+                       "codebook": 32768, "decoder": 3411585, "full": 3961761}
+    codebook_keys = (("quantizer.embedding1.weight", "codebook1.weight"),
+                     ("quantizer.embedding2.weight", "codebook2.weight"))
+    load_full = staticmethod(face24_rvq_model.load_full)
+    load_decoder = staticmethod(face24_rvq_model.load_decoder)
+    parameter_counts = staticmethod(face24_rvq_model.parameter_counts)
+    encode_array = staticmethod(face24_rvq_model.encode_array)
+    decode_bytes = staticmethod(face24_rvq_model.decode_bytes)
 
 
 def make_binary_qr(payload: bytes) -> Image.Image:
     """Create a standard QR with raw byte-mode data, never text/base64/hex."""
-    if not isinstance(payload, (bytes, bytearray, memoryview)) or len(payload) != 64:
-        raise ValueError("QR payload must contain exactly 64 raw bytes.")
+    _validate_payload(payload)
     import qrcode
     from qrcode.constants import ERROR_CORRECT_M
     from qrcode.util import MODE_8BIT_BYTE, QRData
 
     qr = qrcode.QRCode(version=None, error_correction=ERROR_CORRECT_M, box_size=8, border=4)
-    qr.add_data(QRData(bytes(payload), mode=MODE_8BIT_BYTE), optimize=0)
-    qr.make(fit=True)
+    raw = bytes(payload)
+    qr.add_data(QRData(raw, mode=MODE_8BIT_BYTE), optimize=0)
+    try:
+        qr.make(fit=True)
+    except ValueError as exc:
+        if str(exc) != "glog(0)":
+            raise
+        # qrcode 8.2's polynomial division rejects an all-zero RS data block.
+        # Short byte-mode segments place standard QR mode/count bits between
+        # zero runs. Scanners concatenate their bytes into the original payload.
+        qr.clear()
+        for start in range(0, len(raw), 16):
+            qr.add_data(QRData(raw[start:start + 16], mode=MODE_8BIT_BYTE), optimize=0)
+        qr.make(fit=True)
     return qr.make_image(fill_color="black", back_color="white").convert("RGB")
 
 
@@ -220,9 +317,17 @@ def read_binary_qr(image: Image.Image) -> bytes:
     if raw is None:
         raise RuntimeError("The installed QR scanner does not expose raw binary payload bytes.")
     payload = bytes(raw)
-    if len(payload) != 64:
-        raise ValueError(f"Decoded QR payload has {len(payload)} bytes; Phase 18 requires exactly 64.")
+    _validate_payload(payload)
     return payload
+
+
+def _validate_payload(payload):
+    if not isinstance(payload, (bytes, bytearray, memoryview)):
+        raise ValueError("QR payload must contain exactly 64, 128, or 256 raw bytes, or a complete AVIF file up to 512 bytes.")
+    if avif_codec.is_avif(payload):
+        avif_codec.decode(bytes(payload))
+    elif len(payload) not in PAYLOAD_LENGTHS:
+        raise ValueError(f"Decoded QR payload has {len(payload)} bytes; expected 64, 128, or 256 bytes, or a complete AVIF file up to 512 bytes.")
 
 
 def save_demo_image(image: Image.Image, suffix: str) -> str:
@@ -232,86 +337,66 @@ def save_demo_image(image: Image.Image, suffix: str) -> str:
     return str(path)
 
 
-def encode_upload(image: Image.Image, aligner: Face24Aligner, runtime: Phase18Runtime):
+def encode_upload(image: Image.Image, aligner: Face24Aligner, runtime: DemoRuntime,
+                  payload_bytes: int | str = DEFAULT_PAYLOAD_BYTES):
+    if payload_bytes != "avif":
+        runtime.model_for_length(payload_bytes)
     aligned = aligner.align(image)
-    payload = runtime.encode(aligned)
+    payloads = {length: model.encode(aligned) for length, model in runtime.models.items()}
+    payloads["avif"] = avif_codec.encode(aligned)
+    comparisons = {length: runtime.reconstruct(payload) for length, payload in payloads.items()}
+    qr, download, status = preview_qr(payloads, payload_bytes, runtime)
+    return (ImageOps.exif_transpose(image).convert("RGB"), aligned,
+            comparisons[64], comparisons[128], comparisons[256], comparisons["avif"],
+            qr, download, status, avif_codec.description(payloads["avif"]),
+            save_demo_bytes(payloads["avif"], ".avif"), payloads)
+
+
+def save_demo_bytes(payload: bytes, suffix: str) -> str:
+    DEMO_OUTPUT.mkdir(parents=True, exist_ok=True)
+    path = DEMO_OUTPUT / f"{secrets.token_hex(12)}{suffix}"
+    path.write_bytes(payload)
+    return str(path)
+
+
+def preview_qr(payloads: dict, payload_bytes: int | str, runtime: DemoRuntime):
+    """Export the original encoded bytes for a preview, without re-encoding it."""
+    selected = runtime.model_for_length(payload_bytes) if payload_bytes != "avif" else None
+    payload = payloads.get(payload_bytes) if isinstance(payloads, dict) else None
+    if not isinstance(payload, bytes) or (payload_bytes != "avif" and len(payload) != payload_bytes):
+        raise ValueError("Encode a photograph first, then click a reconstruction to see its QR code.")
     qr = make_binary_qr(payload)
     # Test the actual generated QR pixels before exposing the result.
     recovered = read_binary_qr(qr)
     if recovered != payload:
-        raise RuntimeError("QR scanner did not recover the exact 64 encoded bytes.")
-    reconstructed = runtime.reconstruct(recovered)
+        raise RuntimeError(f"QR scanner did not recover the exact {payload_bytes} encoded bytes.")
     download = save_demo_image(qr, ".png")
-    return ImageOps.exif_transpose(image).convert("RGB"), aligned, reconstructed, qr, download, f"Ready · payload {len(payload)} bytes · encoder device {runtime.device} · QR binary round-trip verified."
+    label = selected.label if selected else "AVIF · complete file"
+    return qr, download, f"{label} · {len(payload)} bytes · QR binary round-trip verified."
 
 
-def decode_upload(image: Image.Image, runtime: Phase18Runtime):
+def decode_upload(image: Image.Image, runtime: DemoRuntime):
     if image is None:
         raise ValueError("Upload a QR code image first.")
     payload = read_binary_qr(image)
     reconstructed = runtime.reconstruct(payload)
     download = save_demo_image(reconstructed, ".png")
-    return reconstructed, download, f"Valid Phase 18 QR | {len(payload)} raw bytes | reconstructed on CPU | no source image used."
+    label = "AVIF · complete file" if avif_codec.is_avif(payload) else runtime.model_for_length(len(payload)).label
+    return reconstructed, download, f"Decoded with {label} · {len(payload)} raw bytes."
 
 
 def create_app():
-    import gradio as gr
+    from demo.interface import build_app
 
-    runtime = Phase18Runtime()
-    aligner = Face24Aligner()
-
-    def encode_callback(path):
-        try:
-            if path is None:
-                raise ValueError("Upload a JPG or PNG face photograph first.")
-            path = Path(path)
-            if path.suffix.lower() not in {".jpg", ".jpeg", ".png"}:
-                raise ValueError("Only JPG and PNG photographs are supported.")
-            with Image.open(path) as image:
-                image.load()
-                values = encode_upload(image, aligner, runtime)
-            return values
-        except (OSError, ValueError, RuntimeError) as exc:
-            raise gr.Error(str(exc)) from exc
-
-    def decode_callback(path):
-        try:
-            if path is None:
-                raise ValueError("Upload a QR code PNG or JPG first.")
-            with Image.open(path) as image:
-                image.load()
-                values = decode_upload(image, runtime)
-            return values
-        except (OSError, ValueError, RuntimeError) as exc:
-            raise gr.Error(str(exc)) from exc
-
-    with gr.Blocks(title="Face24 QR codec demo") as demo:
-        gr.Markdown("# Face24 QR codec demo\nLocal demonstration. Images are processed on this machine; no account, cloud service, or identity recognition is used.")
-        with gr.Tab("Encode Image"):
-            upload = gr.File(label="Face photograph (JPG or PNG)", file_types=[".jpg", ".jpeg", ".png"], type="filepath")
-            encode_button = gr.Button("Encode to QR", variant="primary")
-            with gr.Row():
-                original_preview = gr.Image(label="Uploaded image", type="pil")
-                face_preview = gr.Image(label="Face24 B grayscale 64x80", type="pil")
-                reconstruction = gr.Image(label="Phase 18 reconstruction", type="pil")
-                qr_preview = gr.Image(label="Binary QR code", type="pil")
-            qr_download = gr.DownloadButton(label="Download QR PNG")
-            encode_status = gr.Textbox(label="Status", interactive=False)
-            encode_button.click(encode_callback, inputs=upload, outputs=[original_preview, face_preview, reconstruction, qr_preview, qr_download, encode_status])
-        with gr.Tab("Decode QR"):
-            qr_upload = gr.File(label="QR code image (PNG or JPG)", file_types=[".png", ".jpg", ".jpeg"], type="filepath")
-            decode_button = gr.Button("Decode QR", variant="primary")
-            with gr.Row():
-                decoded_face = gr.Image(label="Reconstructed grayscale face", type="pil")
-                decoded_download = gr.DownloadButton(label="Download reconstructed PNG")
-            decode_status = gr.Textbox(label="Payload validation", interactive=False)
-            decode_button.click(decode_callback, inputs=qr_upload, outputs=[decoded_face, decoded_download, decode_status])
-    return demo
+    return build_app(DemoRuntime(), Face24Aligner())
 
 
 def main():
     app = create_app()
-    app.launch(server_name="127.0.0.1", server_port=7860, share=False)
+    # Loopback by default; hosted deployments (e.g. Hugging Face Spaces) set GRADIO_SERVER_NAME=0.0.0.0.
+    app.launch(server_name=os.environ.get("GRADIO_SERVER_NAME", "127.0.0.1"),
+               server_port=int(os.environ.get("GRADIO_SERVER_PORT", "7860")), share=False, pwa=False,
+               app_kwargs={"middleware": [Middleware(FrontendMetadataMiddleware)]})
 
 
 if __name__ == "__main__":

@@ -1,16 +1,13 @@
-dataset/
-models/*
-!models/.gitkeep
-output/*
-!output/.gitkeep
-.venv/
-venv/
+# Demo downloads (QR PNGs, AVIF files) are written here at runtime
+output/
+
+# Python / tooling
 __pycache__/
 *.py[cod]
+.venv/
+venv/
 .pytest_cache/
-.DS_Store
+.ruff_cache/
 .idea/
-*.pt
-*.pth
-*.ckpt
-*.safetensors
+.vscode/
+.DS_Store

@@ -1,0 +1,22 @@
+{
+  "epochs": 200,
+  "optimizer_steps": 58000,
+  "selected_epoch": 187,
+  "final_epoch": 200,
+  "selected_validation_original_reconstruction_loss": 0.06078255362557335,
+  "final_validation_original_reconstruction_loss": 0.061076838598560224,
+  "selection": "minimum Phase18 original unweighted validation reconstruction loss",
+  "selected_equals_final": false,
+  "training_seconds": 35680.70898090001,
+  "peak_gpu_allocated_bytes": 2892545536,
+  "best_checkpoint_sha256": "f426b3358afff3f983f6c64add10f58aa64d549d9499345ffb6b1f89f42f6e95",
+  "last_checkpoint_sha256": "e86c30a9942d829d86990403b8aac681f84ad01ab2a8e6389d4c6091e8b0e57a",
+  "decoder_sha256": "d50a1649103332491cf64c8c3b65fdf52131d9eab4f3a71bc15e68e241ab3949",
+  "experiment_sha256": "9972ec21418ec38adc1870aefc5d965da7aea8797b4e23cbfb84f0b48a87e8ba",
+  "selected_checkpoint_epoch": 187,
+  "resumptions": [],
+  "protected_inputs": {
+    "files_verified": 128,
+    "unchanged": true
+  }
+}
