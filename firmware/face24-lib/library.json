@@ -1,0 +1,7 @@
+{
+  "name": "face24",
+  "version": "1.0.0",
+  "description": "face24 decoder for ESP32 / ESP32-S3 (int8 weights, int16 MAC16 convolutions) and the ESP-NOW payload link",
+  "frameworks": "arduino",
+  "platforms": "espressif32"
+}

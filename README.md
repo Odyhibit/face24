@@ -70,6 +70,7 @@ tests/                 pytest suite
 web/                   static in-browser version (int8 codecs, MediaPipe, QR, AVIF comparison)
 tools/                 int8 export, JS-vs-PyTorch checks, AVIF evaluation
 docs/DEMO.md           detailed demo behaviour and byte-accounting notes
+firmware/              hardware demo: Core2 QR scanner -> ESP-NOW -> T-Deck Plus display (see firmware/README.md)
 docs/HOSTING.md        options for putting the demo online
 ```
 
