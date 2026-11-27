@@ -155,7 +155,7 @@ $("photo").addEventListener("change", async event => {
     t = performance.now();
     const results = await call("encodeAll", { pixels });
     const codecMs = performance.now() - t;
-    for (const size of [64, 128, 256]) {
+    for (const size of [256, 128, 64]) { // same left-to-right order as the cards
       const r = results[size];
       drawGray($(`recon-${size}`), r.recon);
       $(`psnr-${size}`).textContent = `${size} B`;
