@@ -5,6 +5,7 @@ import { readBarcodes, writeBarcode } from "https://cdn.jsdelivr.net/npm/zxing-w
 import { alignFace } from "./align.js";
 import { toBytes } from "./face24.js";
 import { decodeAvif, rebuildAvif } from "./avif.js";
+import { LABEL_PRINTER_URL, createLabelGridUrl, symbolToModules } from "./label-transfer.js";
 
 const $ = id => document.getElementById(id);
 const LANDMARKER = "../weights/mediapipe/face_landmarker.task";
@@ -97,7 +98,23 @@ async function makeQr(payload) {
   const [check] = await readBarcodes(out.image, { formats: ["QRCode"] });
   if (!check || check.bytes.length !== payload.length || check.bytes.some((b, i) => b !== payload[i]))
     throw new Error("Generated QR did not scan back to the same bytes");
-  return URL.createObjectURL(out.image);
+  // The module grid (one pixel per module, 0 = dark) goes to the label printer as-is.
+  return { url: URL.createObjectURL(out.image), modules: symbolToModules(out.symbol) };
+}
+
+// ---------------------------------------------------------------- print a label
+const qrModules = {};
+for (const size of [64, 128, 256]) {
+  $(`print-${size}`).addEventListener("click", () => {
+    const msg = $("encode-message");
+    try {
+      const url = createLabelGridUrl(LABEL_PRINTER_URL, qrModules[size], `Face24 ${size} B`);
+      window.open(url, "_blank", "noopener");
+    } catch (e) {
+      msg.dataset.state = "error";
+      msg.textContent = "Could not open the label editor: " + e.message;
+    }
+  });
 }
 
 // ---------------------------------------------------------------- encode a photo
@@ -106,6 +123,7 @@ $("photo").addEventListener("change", async event => {
   if (!file) return;
   const msg = $("encode-message");
   $("results").hidden = true;
+  for (const size of [64, 128, 256]) { delete qrModules[size]; $(`print-${size}`).disabled = true; }
   msg.textContent = "Detecting face…"; msg.dataset.state = "";
   try {
     const bitmap = await createImageBitmap(file, { imageOrientation: "from-image", colorSpaceConversion: "none" });
@@ -135,9 +153,12 @@ $("photo").addEventListener("change", async event => {
       const r = results[size];
       drawGray($(`recon-${size}`), r.recon);
       $(`psnr-${size}`).textContent = `${size} B`;
-      $(`qr-${size}`).src = await makeQr(r.payload);
-      $(`dl-${size}`).href = $(`qr-${size}`).src;
+      const qr = await makeQr(r.payload);
+      $(`qr-${size}`).src = qr.url;
+      $(`dl-${size}`).href = qr.url;
       $(`dl-${size}`).download = `face24_${size}.png`;
+      qrModules[size] = qr.modules;
+      $(`print-${size}`).disabled = false;
       $(`meta-${size}`).textContent = `${PHASE[size]} · encode ${r.encodeMs.toFixed(0)} ms · decode ${r.decodeMs.toFixed(0)} ms`;
     }
     $("results").hidden = false;
