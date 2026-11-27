@@ -44,6 +44,13 @@
   .card { border: 1px solid var(--line); border-radius: 8px; padding: 12px; text-align: center; }
   .card h3 { margin: 0 0 8px; font-size: 1rem; }
   .card img.qr { width: 100%; max-width: 200px; image-rendering: pixelated; }
+  /* Square slot for each QR: a dashed placeholder until the code is generated. */
+  .qr-slot { position: relative; width: 100%; max-width: 200px; aspect-ratio: 1; margin: 0 auto; }
+  .qr-slot img.qr { display: block; width: 100%; height: 100%; }
+  .qr-slot img.qr:not([src]) { position: absolute; inset: 0; visibility: hidden; }
+  .qr-slot:has(img.qr:not([src])) { display: flex; align-items: center; justify-content: center;
+    border: 1px dashed var(--line); border-radius: 6px; }
+  .qr-slot:has(img.qr:not([src]))::before { content: "QR code appears here"; color: var(--muted); font-size: 0.85rem; }
   .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
   .actions a.button, .actions button { display: block; min-width: 0; text-align: center; padding: 8px 10px; white-space: nowrap; }
   a.button { background: var(--accent); color: var(--card); border-radius: 6px; text-decoration: none; }
@@ -88,19 +95,19 @@
       <div class="card"><h3>64 bytes</h3>
         <div class="pair"><figure><canvas id="recon-64" class="face"></canvas>Face24<br><span id="psnr-64"></span></figure>
           <figure><canvas id="avif-64" class="face"></canvas>AVIF<br><span id="avif-meta-64">…</span></figure></div>
-        <div class="meta" id="meta-64"></div><img id="qr-64" class="qr" alt="64-byte QR code">
+        <div class="meta" id="meta-64"></div><div class="qr-slot"><img id="qr-64" class="qr" alt="64-byte QR code"></div>
         <div class="actions"><a id="dl-64" class="button">Download</a>
           <button type="button" id="print-64" class="secondary" disabled title="Open the label editor in a new tab">Print Label</button></div></div>
       <div class="card"><h3>128 bytes</h3>
         <div class="pair"><figure><canvas id="recon-128" class="face"></canvas>Face24<br><span id="psnr-128"></span></figure>
           <figure><canvas id="avif-128" class="face"></canvas>AVIF<br><span id="avif-meta-128">…</span></figure></div>
-        <div class="meta" id="meta-128"></div><img id="qr-128" class="qr" alt="128-byte QR code">
+        <div class="meta" id="meta-128"></div><div class="qr-slot"><img id="qr-128" class="qr" alt="128-byte QR code"></div>
         <div class="actions"><a id="dl-128" class="button">Download</a>
           <button type="button" id="print-128" class="secondary" disabled title="Open the label editor in a new tab">Print Label</button></div></div>
       <div class="card"><h3>256 bytes</h3>
         <div class="pair"><figure><canvas id="recon-256" class="face"></canvas>Face24<br><span id="psnr-256"></span></figure>
           <figure><canvas id="avif-256" class="face"></canvas>AVIF<br><span id="avif-meta-256">…</span></figure></div>
-        <div class="meta" id="meta-256"></div><img id="qr-256" class="qr" alt="256-byte QR code">
+        <div class="meta" id="meta-256"></div><div class="qr-slot"><img id="qr-256" class="qr" alt="256-byte QR code"></div>
         <div class="actions"><a id="dl-256" class="button">Download</a>
           <button type="button" id="print-256" class="secondary" disabled title="Open the label editor in a new tab">Print Label</button></div></div>
     </div>
