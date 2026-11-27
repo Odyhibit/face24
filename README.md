@@ -1,5 +1,5 @@
 # Face24 — a face in a QR code
-
+## Try it now https://odyhibit.github.io/face24/web/
 Tiny learned image codecs that squeeze an aligned 64×80 grayscale face into **64, 128, or 256 bytes**: small enough to fit in a single QR code. The web demo encodes a photo with all three neural codecs and a conventional AVIF baseline (≤ 512 bytes). It shows the reconstructions side by side and exports or decodes the QR codes.
 
 This is an educational, non-commercial research project. The payloads are lossy compressed pictures, not identity verification, biometrics, or encryption.
