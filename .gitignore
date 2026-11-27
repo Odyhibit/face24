@@ -11,3 +11,7 @@ venv/
 .idea/
 .vscode/
 .DS_Store
+
+# Local-only: contain CelebA or other images that cannot be redistributed
+web/example_faces/
+web/testvectors_local.json

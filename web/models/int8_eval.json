@@ -1,0 +1,32 @@
+{
+  "images": 1000,
+  "models": {
+    "64": {
+      "mse_float": 0.003595937043428421,
+      "mse_int8": 0.003603373421356082,
+      "psnr_float": 24.441879203678912,
+      "psnr_int8": 24.432907291538935,
+      "index_agreement": 0.957265625,
+      "payload_identical_fraction": 0.072,
+      "mean_abs_recon_change_255": 1.3501053163781762
+    },
+    "128": {
+      "mse_float": 0.0023049849551171064,
+      "mse_int8": 0.0023181175347417593,
+      "psnr_float": 26.37331904951533,
+      "psnr_int8": 26.34864547925613,
+      "index_agreement": 0.9328515625,
+      "payload_identical_fraction": 0.0,
+      "mean_abs_recon_change_255": 1.4412595750764012
+    },
+    "256": {
+      "mse_float": 0.001488209585659206,
+      "mse_int8": 0.001497291144914925,
+      "psnr_float": 28.273359024691473,
+      "psnr_int8": 28.246937438547125,
+      "index_agreement": 0.89952734375,
+      "payload_identical_fraction": 0.0,
+      "mean_abs_recon_change_255": 1.375425138976425
+    }
+  }
+}

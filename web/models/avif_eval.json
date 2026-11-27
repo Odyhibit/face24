@@ -1,0 +1,51 @@
+{
+  "images": 1000,
+  "distinct_templates": 1,
+  "budgets": {
+    "64": {
+      "avif_fits_fraction": 0.85,
+      "avif_mean_bytes": 55.551764705882356,
+      "avif_mean_quality": 1.3870588235294117,
+      "avif_psnr_of_mean_mse": 22.493807716712052,
+      "avif_mean_psnr": 22.670176178595227,
+      "codec_psnr_of_mean_mse": 24.441876672896818,
+      "codec_mean_psnr": 24.821903228759766,
+      "avif_better_fraction": 0.012941176470588235,
+      "avif_minus_codec_db_p10_p50_p90": [
+        -3.9209633826242127,
+        -2.493904606134441,
+        -1.0772762315897284
+      ]
+    },
+    "128": {
+      "avif_fits_fraction": 1.0,
+      "avif_mean_bytes": 119.407,
+      "avif_mean_quality": 8.56,
+      "avif_psnr_of_mean_mse": 25.060312293894135,
+      "avif_mean_psnr": 25.36036230504204,
+      "codec_psnr_of_mean_mse": 26.373318610826743,
+      "codec_mean_psnr": 26.76514434814453,
+      "avif_better_fraction": 0.078,
+      "avif_minus_codec_db_p10_p50_p90": [
+        -2.6857736905827183,
+        -1.4147626602865309,
+        -0.1656408585089494
+      ]
+    },
+    "256": {
+      "avif_fits_fraction": 1.0,
+      "avif_mean_bytes": 246.447,
+      "avif_mean_quality": 23.976,
+      "avif_psnr_of_mean_mse": 28.9066535198798,
+      "avif_mean_psnr": 29.24661347344721,
+      "codec_psnr_of_mean_mse": 28.27335970414598,
+      "codec_mean_psnr": 28.69441795349121,
+      "avif_better_fraction": 0.73,
+      "avif_minus_codec_db_p10_p50_p90": [
+        -0.5000168727986686,
+        0.4811854375527602,
+        1.6778515935035383
+      ]
+    }
+  }
+}
