@@ -4,12 +4,8 @@ from pathlib import Path
 import gradio as gr
 from PIL import Image
 
-EMPTY_AVIF_NOTE = "Encode a photograph to see the AVIF file’s exact image-data and container-overhead sizes."
-
-
-def avif_heading(size=None):
-    title = f"{size} bytes" if size is not None else "≤ 512 bytes"
-    return f'<div class="card-heading"><span>CONVENTIONAL · AVIF</span><h3>{title}</h3></div>'
+EMPTY_AVIF_NOTE = "Encode a photograph to see the AVIF frame size chosen for each codec."
+EMPTY_AVIF_CAPTION = "**AVIF** · —"
 
 
 def original_heading(size=None, dimensions=None):
@@ -23,7 +19,8 @@ def build_app(runtime, aligner):
     from demo.codec import DEFAULT_PAYLOAD_BYTES, MODEL_CHOICES, decode_upload, encode_upload, preview_qr
 
     def cleared(message):
-        return (*([None] * 8), message, EMPTY_AVIF_NOTE, None, {}, avif_heading(), original_heading())
+        # 8 images (original, aligned, 3 Face24/AVIF pairs) + QR + QR download, then the texts.
+        return (*([None] * 10), message, EMPTY_AVIF_NOTE, *([EMPTY_AVIF_CAPTION] * 3), {}, original_heading())
 
     def encode_callback(path, payload_bytes):
         try:
@@ -35,8 +32,7 @@ def build_app(runtime, aligner):
             with Image.open(path) as image:
                 image.load()
                 values = encode_upload(image, aligner, runtime, payload_bytes)
-                return (*values, avif_heading(len(values[-1]["avif"])),
-                        original_heading(path.stat().st_size, image.size))
+                return (*values, original_heading(path.stat().st_size, image.size))
         except (OSError, TypeError, ValueError, RuntimeError) as exc:
             gr.Warning(str(exc))
             return cleared(str(exc))
@@ -87,14 +83,14 @@ def build_app(runtime, aligner):
           <span class="local-badge"><span></span> PROCESSED LOCALLY</span></header>
           <section class="hero"><p class="eyebrow">IMAGE COMPRESSION, SIDE BY SIDE</p>
           <h1>A face. A few hundred bytes.</h1>
-          <p class="hero-copy">Compare three learned codecs with conventional AVIF compression.
-          One photograph, one aligned crop, four ways to carry it in a QR code.</p>
+          <p class="hero-copy">Compare three learned codecs with conventional AVIF compression at the same byte budget.
+          One photograph, one aligned crop, three ways to carry it in a QR code.</p>
           <div class="workflow"><span><b>01</b> Add a photograph</span><span><b>02</b> Compare detail</span>
           <span><b>03</b> Export a QR</span></div></section>''')
         with gr.Tabs():
             with gr.Tab("Compare & encode"):
                 payload_state = gr.State({})
-                gr.Markdown("## 01 · Start with a photograph\nChoose a clear JPG or PNG with one visible face. All four codecs receive the same aligned 64 × 80 grayscale crop.", elem_classes="section-heading")
+                gr.Markdown("## 01 · Start with a photograph\nChoose a clear JPG or PNG with one visible face. Every codec, and AVIF, receives the same aligned 64 × 80 grayscale crop.", elem_classes="section-heading")
                 with gr.Row(equal_height=True, elem_classes="source-row"):
                     with gr.Column(scale=2, min_width=260):
                         upload = gr.File(label="Face photograph", file_types=[".jpg", ".jpeg", ".png"], type="filepath", height=180)
@@ -108,29 +104,35 @@ def build_app(runtime, aligner):
                         aligned = gr.Image(label="Shared uncompressed input", show_label=False, type="pil", format="png", height=250, interactive=False, elem_id="face24-target")
                         gr.Markdown("**Raw pixels** · 64 × 80 × 1 byte. Excludes file headers; the preview PNG’s size is not counted.", elem_classes="card-caption")
                 gr.Markdown("**Reading the sizes:** Original = uploaded file bytes; shared input = uncompressed grayscale pixels; reconstructions = bytes stored inside the QR. The original may have different dimensions and color channels.", elem_classes="size-context")
-                gr.Markdown("## 02 · Compare the reconstructions\nLook at the eyes, mouth, and facial structure. Click a preview or its button to export that exact reconstruction’s QR.", elem_classes="section-heading")
+                gr.Markdown("## 02 · Compare the reconstructions\nEach Face24 reconstruction sits next to the smallest AVIF frame with at least as many bytes. Look at the eyes, mouth, and facial structure. Click a Face24 preview or its button to export that exact reconstruction’s QR.", elem_classes="section-heading")
                 previews = []
                 buttons = []
+                avif_previews = []
+                avif_captions = []
                 with gr.Row(equal_height=True, elem_id="codec-cards"):
                     for title, subtitle, identifier, key in (
                         ("64 bytes", "LEARNED · PHASE 18", "phase18", 64),
                         ("128 bytes", "LEARNED · PHASE 21", "phase21", 128),
                         ("256 bytes", "LEARNED RVQ · PHASE 22", "phase22", 256),
-                        ("≤ 512 bytes", "CONVENTIONAL · AVIF", "avif", "avif"),
                     ):
-                        with gr.Column(min_width=210, elem_classes="codec-card"):
-                            heading = gr.HTML(f'<div class="card-heading"><span>{subtitle}</span><h3>{title}</h3></div>')
-                            if key == "avif":
-                                avif_title = heading
-                            preview = gr.Image(label=f"{title} reconstruction", show_label=False, type="pil", format="png", height=250, interactive=False, elem_id=f"face24-{identifier}")
+                        with gr.Column(min_width=300, elem_classes="codec-card"):
+                            gr.HTML(f'<div class="card-heading"><span>{subtitle}</span><h3>{title}</h3></div>')
+                            with gr.Row(elem_classes="pair-row"):
+                                with gr.Column(min_width=120):
+                                    preview = gr.Image(label=f"Face24 {title} reconstruction", show_label=False, type="pil", format="png", height=200, interactive=False, elem_id=f"face24-{identifier}")
+                                    gr.Markdown(f"**Face24 · {key} bytes**", elem_classes="pair-caption")
+                                with gr.Column(min_width=120):
+                                    avif_preview = gr.Image(label=f"AVIF at least {title}", show_label=False, type="pil", format="png", height=200, interactive=False, elem_id=f"face24-avif{key}")
+                                    avif_caption = gr.Markdown(EMPTY_AVIF_CAPTION, elem_classes="pair-caption")
                             button = gr.Button("Show QR", size="sm")
                             previews.append(preview)
+                            avif_previews.append(avif_preview)
+                            avif_captions.append(avif_caption)
                             buttons.append((button, key))
                 with gr.Group(elem_classes="accounting-panel"):
                     gr.Markdown("### Every transmitted byte counts")
                     avif_note = gr.Markdown(EMPTY_AVIF_NOTE)
-                    gr.Markdown("The learned sizes count raw indices and rely on pre-shared neural decoders. AVIF’s size counts the **complete standalone file**, including its container, and relies on a standard AVIF decoder. Shared decoder software and model weights are excluded from both. QR framing and error correction add transport overhead for every option; the displayed sizes count the bytes stored inside the QR.")
-                    avif_download = gr.DownloadButton(label="Download complete AVIF file", size="sm")
+                    gr.Markdown("Each Face24 result is shown next to the smallest AVIF image that is at least as many bytes. Only the AVIF’s **compressed frame data** is counted: the rest of the file (about 280 bytes of container and AV1 headers) is identical for every face, so the decoder keeps it as a template, the same way the Face24 decoder keeps its codebook. Shared decoder software and model weights are excluded for both. AVIF is shown for comparison only; QR export covers the three Face24 codecs.")
                 gr.Markdown("## 03 · Take the result with you\nSelect a codec or click any reconstruction above. The QR and download always use that preview’s original encoded bytes.", elem_classes="section-heading")
                 with gr.Row(elem_classes="export-row"):
                     qr = gr.Image(label="Verified binary QR", type="pil", format="png", height=340, interactive=False, scale=1, min_width=280)
@@ -139,7 +141,8 @@ def build_app(runtime, aligner):
                         status = gr.Textbox(label="Export status", value="Add a photograph to begin.", interactive=False, lines=2)
                         qr_download = gr.DownloadButton(label="Download QR as PNG", variant="primary")
                         gr.Markdown("**To decode:** save the QR, open the **Decode a QR** tab, and upload it. The format is detected automatically. Binary image payloads may not appear as text or a link in a phone’s camera app.")
-                outputs = [original, aligned, *previews, qr, qr_download, status, avif_note, avif_download, payload_state, avif_title, original_title]
+                pairs = [image for pair in zip(previews, avif_previews) for image in pair]
+                outputs = [original, aligned, *pairs, qr, qr_download, status, avif_note, *avif_captions, payload_state, original_title]
                 qr_outputs = [qr, qr_download, status, choice]
                 encode_button.click(encode_callback, inputs=[upload, choice], outputs=outputs, api_name="encode_callback", concurrency_id="face24_encoder", concurrency_limit=1)
                 for preview, (button, key) in zip(previews, buttons):
@@ -150,7 +153,7 @@ def build_app(runtime, aligner):
                 choice.input(choose_preview, inputs=[payload_state, choice], outputs=qr_outputs, api_name="select_model_qr", concurrency_id="face24_encoder", concurrency_limit=1)
                 upload.change(lambda: cleared("Click Compare codecs to encode this photograph."), outputs=outputs, api_name="clear_previews", concurrency_id="face24_encoder", concurrency_limit=1)
             with gr.Tab("Decode a QR"):
-                gr.Markdown("## Bring a face back from its QR\nUpload a QR image exported by this demo. It automatically recognizes the 64-, 128-, and 256-byte learned formats and complete AVIF files up to 512 bytes.", elem_classes="section-heading")
+                gr.Markdown("## Bring a face back from its QR\nUpload a QR image exported by this demo or the browser version. It automatically recognizes the 64-, 128-, and 256-byte learned formats.", elem_classes="section-heading")
                 with gr.Row():
                     with gr.Column():
                         qr_upload = gr.File(label="QR image · PNG or JPG", file_types=[".png", ".jpg", ".jpeg"], type="filepath")

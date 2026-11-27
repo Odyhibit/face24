@@ -1,11 +1,17 @@
+import base64
 import io
+import json
+import re
+from pathlib import Path
 
 import numpy as np
 import pytest
 from PIL import Image
 
 from demo import avif_codec
-from demo.codec import DemoRuntime, decode_upload, encode_upload, make_binary_qr, preview_qr, read_binary_qr
+from demo.codec import DemoRuntime, encode_upload, preview_qr, read_binary_qr
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture(scope="module")
@@ -15,73 +21,92 @@ def face():
     return Image.fromarray(((x * 3 + y * 2 + (x > 32) * 50) % 256).astype(np.uint8))
 
 
-def test_avif_is_standalone_under_budget_and_accounting_adds_up(face):
-    payload = avif_codec.encode(face)
-    sizes = avif_codec.accounting(payload)
-    assert sizes["total_bytes"] <= 512
-    assert sizes["av1_bitstream_bytes"] + sizes["container_overhead_bytes"] == len(payload)
-    assert sizes["container_overhead_bytes"] > 0 and sizes["av1_bitstream_bytes"] > 0
-    with Image.open(io.BytesIO(payload)) as image:
-        assert image.format == "AVIF" and image.size == (64, 80)
-        image.load()
-    assert str(sizes["total_bytes"]) in avif_codec.description(payload)
-    assert str(sizes["container_overhead_bytes"]) in avif_codec.description(payload)
-    # A decoder with no neural models still recovers this complete file.
-    runtime = DemoRuntime.__new__(DemoRuntime)
-    runtime.models = {}
-    qr = make_binary_qr(payload)
-    assert read_binary_qr(qr) == payload
-    np.testing.assert_array_equal(np.asarray(runtime.reconstruct(payload)), np.asarray(avif_codec.decode(payload)))
+def test_template_matches_the_browser_demo():
+    source = (ROOT / "web" / "avif.js").read_text(encoding="utf-8")
+    web = base64.b64decode(re.search(r'TEMPLATE_B64 =\s*"([^"]+)"', source).group(1))
+    assert avif_codec.TEMPLATE == web
 
 
-@pytest.mark.parametrize("payload", [b"not avif", b"\0\0\0\x18ftypavif" + bytes(20), b"\0\0\0\x18ftypavif" + bytes(501)])
-def test_corrupt_or_oversized_avif_is_rejected(payload):
+def test_matches_browser_reference_vectors():
+    """Same frames, rebuilt files and decoded pixels as web/avif_vectors.json (made with Pillow)."""
+    vectors = json.loads((ROOT / "web" / "avif_vectors.json").read_text(encoding="utf-8"))
+    b64 = base64.b64decode
+    assert vectors["cases"]
+    for case in vectors["cases"]:
+        image = Image.frombytes("L", (64, 80), b64(vectors["inputs"][case["input"]]))
+        payload = avif_codec.encode_frame(image, case["quality"])
+        assert payload == b64(case["payload"])
+        assert avif_codec.rebuild(payload) == b64(case["rebuilt"])
+        assert np.asarray(avif_codec.decode(payload)).tobytes() == b64(case["decoded"])
+
+
+def test_strip_and_rebuild_round_trip(face):
+    buffer = io.BytesIO()
+    face.save(buffer, "AVIF", quality=40, speed=4, subsampling="4:0:0", max_threads=1)
+    full = buffer.getvalue()
+    payload = avif_codec.strip(full)
+    assert len(payload) < len(full) - 250  # the template carries the ~280 fixed bytes
+    assert avif_codec.rebuild(payload) == full
+    with Image.open(io.BytesIO(full)) as image:
+        expected = np.asarray(image.convert("L"))
+    np.testing.assert_array_equal(np.asarray(avif_codec.decode(payload)), expected)
+
+
+def test_each_budget_gets_the_smallest_frame_at_least_that_large(face):
+    found = avif_codec.encode_for_budgets(face)
+    assert set(found) == set(avif_codec.BUDGETS)
+    # Reproduce the scan: qualities 0..100, stopping after the first frame past 2x the largest budget.
+    sizes, stop = [], 2 * max(avif_codec.BUDGETS)
+    for quality in avif_codec.QUALITIES:
+        sizes.append(len(avif_codec.encode_frame(face, quality)))
+        if sizes[-1] > stop:
+            break
+    for budget, entry in found.items():
+        assert len(entry["payload"]) >= budget
+        assert entry["payload"] == avif_codec.encode_frame(face, entry["quality"])
+        assert len(entry["payload"]) == min(size for size in sizes if size >= budget)
+    assert "AVIF" in avif_codec.description(found)
+    assert str(len(found[128]["payload"])) in avif_codec.caption(found, 128)
+
+
+def test_scan_prefers_higher_quality_on_ties_and_skips_unreachable_budgets(monkeypatch, face):
+    sizes = {0: 70, 1: 66, 2: 66, 3: 90}
+    monkeypatch.setattr(avif_codec, "encode_frame", lambda image, quality: bytes(sizes.get(quality, 600)))
+    found = avif_codec.encode_for_budgets(face, budgets=(64, 1000))
+    assert found[64]["quality"] == 2 and len(found[64]["payload"]) == 66
+    assert 1000 not in found
+    assert "no frame" in avif_codec.caption(found, 1000)
+
+
+@pytest.mark.parametrize("payload", [b"", b"\xff" * 5])
+def test_corrupt_frames_are_rejected(payload):
     with pytest.raises(ValueError):
         avif_codec.decode(payload)
 
 
-def test_highest_fitting_quality_without_assuming_monotonic_size(monkeypatch, face):
-    tested = []
-    def save(self, file, format, quality, **kwargs):
-        tested.append(quality)
-        file.write(bytes(512 if quality == 97 else 513))
-    monkeypatch.setattr(Image.Image, "save", save)
-    monkeypatch.setattr(avif_codec, "decode", lambda payload: face)
-    assert len(avif_codec.encode(face)) == 512
-    assert tested == [100, 99, 98, 97]
-
-
-def test_no_fitting_file_fails_instead_of_exceeding_budget(monkeypatch, face):
-    monkeypatch.setattr(Image.Image, "save", lambda self, file, *args, **kwargs: file.write(bytes(513)))
-    with pytest.raises(ValueError, match="cannot fit"):
-        avif_codec.encode(face)
-
-
-def test_avif_preview_qr_uses_cached_complete_file(monkeypatch, tmp_path, face):
+def test_avif_is_comparison_only(monkeypatch, tmp_path, face):
     from demo import codec
     monkeypatch.setattr(codec, "DEMO_OUTPUT", tmp_path)
-    runtime = DemoRuntime.__new__(DemoRuntime)
-    runtime.models = {}
     class Aligned:
         def align(self, image):
             return image
-    # Exercise the real four-codec helper with small stand-ins for the neural paths.
+    # Small stand-ins for the neural paths; the AVIF path is real.
     class Neural:
         def __init__(self, size):
             self.size = size
+            self.label = f"Stand-in {size}"
         def encode(self, image):
             return bytes(self.size)
         def reconstruct(self, payload):
             return face
+    runtime = DemoRuntime.__new__(DemoRuntime)
     runtime.models = {n: Neural(n) for n in (64, 128, 256)}
-    result = encode_upload(face, Aligned(), runtime, "avif")
+    result = encode_upload(face, Aligned(), runtime)
     payloads = result[-1]
-    monkeypatch.setattr(avif_codec, "encode", lambda *_: pytest.fail("Cached preview was re-encoded"))
-    qr, download, status = preview_qr(payloads, "avif", runtime)
-    assert "AVIF" in status and read_binary_qr(qr) == payloads["avif"]
-    assert result[9] == avif_codec.description(payloads["avif"])
-    with Image.open(download) as image:
-        assert read_binary_qr(image) == payloads["avif"]
-    reconstructed, _, status = decode_upload(qr, runtime)
-    np.testing.assert_array_equal(np.asarray(reconstructed), np.asarray(result[5]))
-    assert "AVIF" in status
+    assert set(payloads) == {64, 128, 256}
+    for avif_preview in result[3:8:2]:
+        assert avif_preview.size == (64, 80)
+    with pytest.raises(ValueError):
+        preview_qr(payloads, "avif", runtime)
+    qr, _, status = preview_qr(payloads, 128, runtime)
+    assert read_binary_qr(qr) == payloads[128] and "128 bytes" in status

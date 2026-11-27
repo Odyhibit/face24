@@ -36,7 +36,7 @@ PHASE22 = WEIGHTS / "face24_256_rvq"
 DEFAULT_PAYLOAD_BYTES = 128
 PAYLOAD_LENGTHS = (64, 128, 256)
 MODEL_CHOICES = [("Phase 18 · 64 bytes", 64), ("Phase 21 · 128 bytes (preferred)", 128),
-                 ("Phase 22 RVQ · 256 bytes", 256), ("AVIF · up to 512 bytes", "avif")]
+                 ("Phase 22 RVQ · 256 bytes", 256)]
 # MediaPipe Face Landmarker v1 (float16), Apache-2.0:
 # https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task
 DETECTOR_MODEL = WEIGHTS / "mediapipe/face_landmarker.task"
@@ -239,8 +239,6 @@ class DemoRuntime:
     def reconstruct(self, payload: bytes) -> Image.Image:
         if not isinstance(payload, (bytes, bytearray, memoryview)):
             raise TypeError("Expected a raw binary face payload.")
-        if avif_codec.is_avif(payload):
-            return avif_codec.decode(bytes(payload))
         return self.model_for_length(len(payload)).reconstruct(payload)
 
 
@@ -323,11 +321,9 @@ def read_binary_qr(image: Image.Image) -> bytes:
 
 def _validate_payload(payload):
     if not isinstance(payload, (bytes, bytearray, memoryview)):
-        raise ValueError("QR payload must contain exactly 64, 128, or 256 raw bytes, or a complete AVIF file up to 512 bytes.")
-    if avif_codec.is_avif(payload):
-        avif_codec.decode(bytes(payload))
-    elif len(payload) not in PAYLOAD_LENGTHS:
-        raise ValueError(f"Decoded QR payload has {len(payload)} bytes; expected 64, 128, or 256 bytes, or a complete AVIF file up to 512 bytes.")
+        raise ValueError("QR payload must contain exactly 64, 128, or 256 raw bytes.")
+    if len(payload) not in PAYLOAD_LENGTHS:
+        raise ValueError(f"Decoded QR payload has {len(payload)} bytes; expected 64, 128, or 256 bytes.")
 
 
 def save_demo_image(image: Image.Image, suffix: str) -> str:
@@ -338,32 +334,31 @@ def save_demo_image(image: Image.Image, suffix: str) -> str:
 
 
 def encode_upload(image: Image.Image, aligner: Face24Aligner, runtime: DemoRuntime,
-                  payload_bytes: int | str = DEFAULT_PAYLOAD_BYTES):
-    if payload_bytes != "avif":
-        runtime.model_for_length(payload_bytes)
+                  payload_bytes: int = DEFAULT_PAYLOAD_BYTES):
+    """-> (original, aligned, face64, avif64, face128, avif128, face256, avif256,
+           qr, qr download, status, AVIF summary, AVIF caption 64/128/256, payloads).
+    AVIF is a comparison only: each codec size is shown next to the smallest header-stripped
+    AVIF frame of at least as many bytes (same rule as the browser demo). Only the codec
+    payloads are exported as QR codes."""
+    runtime.model_for_length(payload_bytes)
     aligned = aligner.align(image)
     payloads = {length: model.encode(aligned) for length, model in runtime.models.items()}
-    payloads["avif"] = avif_codec.encode(aligned)
-    comparisons = {length: runtime.reconstruct(payload) for length, payload in payloads.items()}
+    faces = {length: runtime.reconstruct(payload) for length, payload in payloads.items()}
+    avif = avif_codec.encode_for_budgets(aligned, PAYLOAD_LENGTHS)
+    avif_faces = {length: avif_codec.decode(avif[length]["payload"]) if length in avif else None
+                  for length in PAYLOAD_LENGTHS}
     qr, download, status = preview_qr(payloads, payload_bytes, runtime)
     return (ImageOps.exif_transpose(image).convert("RGB"), aligned,
-            comparisons[64], comparisons[128], comparisons[256], comparisons["avif"],
-            qr, download, status, avif_codec.description(payloads["avif"]),
-            save_demo_bytes(payloads["avif"], ".avif"), payloads)
+            faces[64], avif_faces[64], faces[128], avif_faces[128], faces[256], avif_faces[256],
+            qr, download, status, avif_codec.description(avif),
+            *(avif_codec.caption(avif, length) for length in PAYLOAD_LENGTHS), payloads)
 
 
-def save_demo_bytes(payload: bytes, suffix: str) -> str:
-    DEMO_OUTPUT.mkdir(parents=True, exist_ok=True)
-    path = DEMO_OUTPUT / f"{secrets.token_hex(12)}{suffix}"
-    path.write_bytes(payload)
-    return str(path)
-
-
-def preview_qr(payloads: dict, payload_bytes: int | str, runtime: DemoRuntime):
+def preview_qr(payloads: dict, payload_bytes: int, runtime: DemoRuntime):
     """Export the original encoded bytes for a preview, without re-encoding it."""
-    selected = runtime.model_for_length(payload_bytes) if payload_bytes != "avif" else None
+    selected = runtime.model_for_length(payload_bytes)
     payload = payloads.get(payload_bytes) if isinstance(payloads, dict) else None
-    if not isinstance(payload, bytes) or (payload_bytes != "avif" and len(payload) != payload_bytes):
+    if not isinstance(payload, bytes) or len(payload) != payload_bytes:
         raise ValueError("Encode a photograph first, then click a reconstruction to see its QR code.")
     qr = make_binary_qr(payload)
     # Test the actual generated QR pixels before exposing the result.
@@ -371,7 +366,7 @@ def preview_qr(payloads: dict, payload_bytes: int | str, runtime: DemoRuntime):
     if recovered != payload:
         raise RuntimeError(f"QR scanner did not recover the exact {payload_bytes} encoded bytes.")
     download = save_demo_image(qr, ".png")
-    label = selected.label if selected else "AVIF · complete file"
+    label = selected.label
     return qr, download, f"{label} · {len(payload)} bytes · QR binary round-trip verified."
 
 
@@ -381,7 +376,7 @@ def decode_upload(image: Image.Image, runtime: DemoRuntime):
     payload = read_binary_qr(image)
     reconstructed = runtime.reconstruct(payload)
     download = save_demo_image(reconstructed, ".png")
-    label = "AVIF · complete file" if avif_codec.is_avif(payload) else runtime.model_for_length(len(payload)).label
+    label = runtime.model_for_length(len(payload)).label
     return reconstructed, download, f"Decoded with {label} · {len(payload)} raw bytes."
 
 

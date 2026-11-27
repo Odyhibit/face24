@@ -1,6 +1,6 @@
 # Face24 — a face in a QR code
 ## Try it now https://odyhibit.github.io/face24/web/
-Tiny learned image codecs that squeeze an aligned 64×80 grayscale face into **64, 128, or 256 bytes**: small enough to fit in a single QR code. The web demo encodes a photo with all three neural codecs and a conventional AVIF baseline (≤ 512 bytes). It shows the reconstructions side by side and exports or decodes the QR codes.
+Tiny learned image codecs that squeeze an aligned 64×80 grayscale face into **64, 128, or 256 bytes**: small enough to fit in a single QR code. The demos encode a photo with all three neural codecs and show each next to a conventional AVIF baseline at the same byte budget. It shows the reconstructions side by side and exports or decodes the QR codes.
 
 This is an educational, non-commercial research project. The payloads are lossy compressed pictures, not identity verification, biometrics, or encryption.
 
@@ -43,7 +43,7 @@ Tools: `tools/export_web.py` writes the int8 models and test vectors; `node tool
 | 64 B | VQ-VAE, 8×8 grid | one codebook index (0–255) per cell | 0.838 | 0.056 |
 | 128 B (default) | VQ-VAE, 16×8 grid | one codebook index per cell | 0.883 | 0.046 |
 | 256 B | Residual VQ, 2 × 16×8 | coarse + residual index per cell | 0.920 | 0.033 |
-| ≤ 512 B | AVIF (AV1) baseline | complete standalone `.avif` file | — | — |
+| ≥ 64 / 128 / 256 B | AVIF (AV1) baseline, comparison only | AV1 frame data; the ~280-byte container is a shared template | — | — |
 
 Metrics are on the 7,557-image CelebA test split at 64×80 grayscale.
 

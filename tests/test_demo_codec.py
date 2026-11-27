@@ -192,9 +192,12 @@ def test_photo_comparison_and_qr_export_use_selected_model(demo_runtime, monkeyp
                 results = encode_upload(source, aligner, demo_runtime, size)
     finally:
         aligner.close()
-    _original, aligned, face64, face128, face256, avif_preview, qr, download, status, avif_note, avif_file, payloads = results
-    assert avif_preview.size == (64, 80) and "overhead" in avif_note
-    assert Path(avif_file).read_bytes() == payloads["avif"]
+    (_original, aligned, face64, avif64, face128, avif128, face256, avif256,
+     qr, download, status, avif_note, *avif_captions, payloads) = results
+    for avif_preview in (avif64, avif128, avif256):
+        assert avif_preview.size == (64, 80)
+    assert "AVIF" in avif_note and all("AVIF" in caption for caption in avif_captions)
+    assert set(payloads) == {64, 128, 256}  # AVIF is a comparison only, never exported
     previews = {64: face64, 128: face128, 256: face256}
     phase = {64: 18, 128: 21, 256: 22}[size]
     payload = read_binary_qr(qr)
@@ -261,7 +264,7 @@ def test_preview_click_exports_cached_payload_without_another_encoding(demo_runt
         def align(self, image):
             return image
     results = encode_upload(pixels, AlreadyAligned(), demo_runtime)
-    previews = dict(zip((64, 128, 256), results[2:5]))
+    previews = dict(zip((64, 128, 256), results[2:8:2]))  # Face24 previews; AVIF sits between them
     payloads = results[-1]
     def unexpected_encode(*args):
         raise AssertionError('Preview clicks must not encode any image again')
