@@ -19,7 +19,8 @@ Open http://127.0.0.1:7860, upload a photo containing one face, and click **Comp
 
 ## In the browser
 
-`web/` is a static version that runs entirely in the browser, with nothing uploaded. Use it through GitHub Pages, or locally:
+`web/` is a static version that runs entirely in the browser. 
+
 
 ```bash
 python -m http.server 8765        # from the repository root
@@ -86,4 +87,4 @@ Set `FACE24_TEST_PHOTO=/path/to/single_face.jpg` to also run the end-to-end real
 - Code: MIT (see `LICENSE`).
 - The codec weights were trained on [CelebA](https://mmlab.ie.cuhk.edu.hk/projects/CelebA.html), which is licensed for **non-commercial research only**. Use the weights accordingly. The dataset itself is not included.
 - `weights/mediapipe/face_landmarker.task` is Google's [MediaPipe Face Landmarker](https://ai.google.dev/edge/mediapipe/solutions/vision/face_landmarker) model (Apache-2.0).
-- Training code and experiment history live in a separate research workspace and are not part of this repository.
+
