@@ -110,10 +110,11 @@ def build_app(runtime, aligner):
                 avif_previews = []
                 avif_captions = []
                 with gr.Row(equal_height=True, elem_id="codec-cards"):
+                    # Largest first, so the cards read 256 → 128 → 64 bytes left to right.
                     for title, subtitle, identifier, key in (
-                        ("64 bytes", "LEARNED · PHASE 18", "phase18", 64),
-                        ("128 bytes", "LEARNED · PHASE 21", "phase21", 128),
                         ("256 bytes", "LEARNED RVQ · PHASE 22", "phase22", 256),
+                        ("128 bytes", "LEARNED · PHASE 21", "phase21", 128),
+                        ("64 bytes", "LEARNED · PHASE 18", "phase18", 64),
                     ):
                         with gr.Column(min_width=300, elem_classes="codec-card"):
                             gr.HTML(f'<div class="card-heading"><span>{subtitle}</span><h3>{title}</h3></div>')
@@ -141,8 +142,13 @@ def build_app(runtime, aligner):
                         status = gr.Textbox(label="Export status", value="Add a photograph to begin.", interactive=False, lines=2)
                         qr_download = gr.DownloadButton(label="Download QR as PNG", variant="primary")
                         gr.Markdown("**To decode:** save the QR, open the **Decode a QR** tab, and upload it. The format is detected automatically. Binary image payloads may not appear as text or a link in a phone’s camera app.")
-                pairs = [image for pair in zip(previews, avif_previews) for image in pair]
-                outputs = [original, aligned, *pairs, qr, qr_download, status, avif_note, *avif_captions, payload_state, original_title]
+                # encode_upload returns its images and captions in 64, 128, 256 order; map them
+                # to the cards by size, not by the cards' on-screen order.
+                by_size = {key: (preview, avif_preview, caption)
+                           for (_, key), preview, avif_preview, caption in zip(buttons, previews, avif_previews, avif_captions)}
+                pairs = [component for size in (64, 128, 256) for component in by_size[size][:2]]
+                captions = [by_size[size][2] for size in (64, 128, 256)]
+                outputs = [original, aligned, *pairs, qr, qr_download, status, avif_note, *captions, payload_state, original_title]
                 qr_outputs = [qr, qr_download, status, choice]
                 encode_button.click(encode_callback, inputs=[upload, choice], outputs=outputs, api_name="encode_callback", concurrency_id="face24_encoder", concurrency_limit=1)
                 for preview, (button, key) in zip(previews, buttons):

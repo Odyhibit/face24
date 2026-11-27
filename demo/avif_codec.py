@@ -145,5 +145,5 @@ def caption(found: dict, budget: int) -> str:
 
 def description(found: dict) -> str:
     parts = [f"{budget} B → AVIF {len(found[budget]['payload'])} B (quality {found[budget]['quality']})"
-             if budget in found else f"{budget} B → no AVIF frame this large" for budget in BUDGETS]
+             if budget in found else f"{budget} B → no AVIF frame this large" for budget in reversed(BUDGETS)]
     return "**This photo:** " + " · ".join(parts) + "."

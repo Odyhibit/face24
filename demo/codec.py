@@ -35,8 +35,8 @@ PHASE21 = WEIGHTS / "face24_128"
 PHASE22 = WEIGHTS / "face24_256_rvq"
 DEFAULT_PAYLOAD_BYTES = 128
 PAYLOAD_LENGTHS = (64, 128, 256)
-MODEL_CHOICES = [("Phase 18 · 64 bytes", 64), ("Phase 21 · 128 bytes (preferred)", 128),
-                 ("Phase 22 RVQ · 256 bytes", 256)]
+MODEL_CHOICES = [("Phase 22 RVQ · 256 bytes", 256), ("Phase 21 · 128 bytes (preferred)", 128),
+                 ("Phase 18 · 64 bytes", 64)]  # largest first, matching the card order
 # MediaPipe Face Landmarker v1 (float16), Apache-2.0:
 # https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task
 DETECTOR_MODEL = WEIGHTS / "mediapipe/face_landmarker.task"
