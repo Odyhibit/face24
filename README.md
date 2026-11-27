@@ -7,8 +7,8 @@ This is an educational, non-commercial research project. The payloads are lossy 
 ## Quick start
 
 ```bash
-git clone https://github.com/Odyhibit/eigenfaces.git
-cd eigenfaces
+git clone https://github.com/Odyhibit/face24.git
+cd face24
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 python -m pip install -r requirements.txt
