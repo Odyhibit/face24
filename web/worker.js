@@ -2,14 +2,16 @@
 import { loadModel, encode, decode } from "./face24.js";
 import { stripAvif } from "./avif.js";
 
-// AVIF encoder (libavif + libaom compiled to wasm, ~3.5 MB). Loaded only when first needed.
+// AVIF encoder (libavif + libaom compiled to wasm, ~3.5 MB). The page preloads it at startup
+// ("avifLoad"); a failed load is forgotten so the next request retries.
 const AVIF_ENCODER = "https://cdn.jsdelivr.net/npm/@jsquash/avif@2.1.1/codec/enc/avif_enc.js";
 // Same settings as tools/avif_eval.py uses with Pillow: speed 4, 4:0:0 (subsample 0), 8-bit.
 const AVIF_OPTIONS = { quality: 50, qualityAlpha: -1, denoiseLevel: 0, tileColsLog2: 0, tileRowsLog2: 0, speed: 4,
   subsample: 0, chromaDeltaQ: false, sharpness: 0, tune: 0, enableSharpYUV: false, bitDepth: 8, lossless: false };
 let avifModule;
 function avifEncoder() {
-  avifModule ??= import(AVIF_ENCODER).then(m => m.default({ noInitialRun: true }));
+  avifModule ??= import(AVIF_ENCODER).then(m => m.default({ noInitialRun: true }))
+    .catch(e => { avifModule = undefined; throw e; });
   return avifModule;
 }
 async function avifFrame(pixels, quality) {
@@ -46,6 +48,8 @@ const ready = (async () => {
 self.onmessage = async ({ data }) => {
   const { id, op } = data;
   try {
+    // Preload doesn't need the codec models, so it runs in parallel with them.
+    if (op === "avifLoad") { await avifEncoder(); return postMessage({ id, result: true }); }
     await ready;
     if (op === "ready") return postMessage({ id, result: true });
     if (op === "encodeAll") {

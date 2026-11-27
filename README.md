@@ -32,7 +32,7 @@ Then open http://localhost:8765/web/. It loads int8 copies of the three codecs (
 - **Decode:** read a QR code from an image or the camera. QR codes from the Python app work too.
 - **Self-test:** checks the browser's results against PyTorch and Pillow reference outputs.
 
-The AVIF comparison counts only the AV1 frame data. The rest of the file (about 280 bytes) is identical for every face, so `web/avif.js` keeps it as a template, the same way the codec decoder keeps its codebook. The AVIF encoder (libavif compiled to WebAssembly, about 3.5 MB) is loaded from jsdelivr only when needed.
+The AVIF comparison counts only the AV1 frame data. The rest of the file (about 280 bytes) is identical for every face, so `web/avif.js` keeps it as a template, the same way the codec decoder keeps its codebook. The AVIF encoder (libavif compiled to WebAssembly, about 3.5 MB) is loaded from jsdelivr in the background when the page opens.
 
 Tools: `tools/export_web.py` writes the int8 models and test vectors; `node tools/check_web.mjs` compares the JavaScript with them; `tools/avif_eval.py` runs the AVIF-versus-codec comparison on the test split.
 

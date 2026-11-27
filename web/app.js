@@ -43,6 +43,12 @@ let landmarker;
 const startup = performance.now();
 call("ready").then(() => setStatus("models", `Codecs ready · ${(modelBytes / 1e6).toFixed(1)} MB int8 weights`, "ok"))
   .catch(e => setStatus("models", "Codecs failed: " + e.message, "error"));
+// Every photo needs the AVIF encoder, so start its 3.5 MB download now instead of on the first photo.
+setStatus("avif", "AVIF encoder: downloading (about 3.5 MB)…");
+call("avifLoad")
+  .then(() => { if (!$("status-avif").dataset.state)
+    setStatus("avif", `AVIF encoder ready (${((performance.now() - startup) / 1000).toFixed(1)} s)`, "ok"); })
+  .catch(e => setStatus("avif", "AVIF encoder failed to load: " + e.message + " (will retry on the first photo)", "error"));
 (async () => {
   try {
     const files = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.2.0/wasm");
